@@ -3,13 +3,17 @@
 ### Import libraries
 from fuzzywuzzy import fuzz
 import numpy as np
-import os
+import os, sys, inspect
 import pandas as pd
 import pickle
 import re
-import sys
 
-from .resource_manager import ResourceManager
+cmd_folder = os.path.realpath(os.path.abspath(os.path.split(\
+                inspect.getfile( inspect.currentframe() ))[0]))
+if cmd_folder not in sys.path:
+     sys.path.insert(0, cmd_folder)
+
+import resource_manager
 
 # !pip install -q fuzzywuzzy
 # !pip install -q fuzzywuzzy[speedup]
@@ -17,9 +21,9 @@ from .resource_manager import ResourceManager
 class AddressParser:
 
     def __init__(self):
-        self.street_name_abbr_dict = ResourceManager().load_resource(\
+        self.street_name_abbr_dict = resource_manager.load_resource(\
                                             "street_name_abbr_dict.pickle")
-        self.mile_road_dict = ResourceManager().load_resource(\
+        self.mile_road_dict = resource_manager.load_resource(\
                                             "mile_road_dict.pickle")
 
 
@@ -33,8 +37,7 @@ class AddressParser:
         """
 
         try:
-            x = x.strip()
-            return (x[0].upper()+x[1:].lower())
+            return x.title()
         except:
             return ""
 
@@ -145,8 +148,8 @@ class AddressParser:
             (matched_name, matched_suffix, ratio)
         """
 
-        street_name = self.to_first_upper(street_name)
-        street_suffix = self.strip(self.to_first_upper(street_suffix))
+        street_name = self.strip(street_name).title()
+        street_suffix = self.strip(street_suffix).title()
 
         # Initialize return values
         matched_name = ""
@@ -154,8 +157,11 @@ class AddressParser:
         ratio = 0
 
         # Look for exact match
-        if ( (street_name+" "+street_suffix) in standard_address_set ):
+        if (street_name, street_suffix) in standard_address_set: 
             return (street_name,street_suffix,100)
+
+        if tuple(street_name.split(' ')) in standard_address_set: 
+            return (street_name.split(' ')[0],street_name.split(' ')[1],100)
 
         if (street_name+" "+street_suffix) in standard_name_set:
             matched_name = (street_name+" "+street_suffix)
@@ -181,10 +187,11 @@ class AddressParser:
             for standard_name in standard_name_set:
                 potential_ratio = fuzz.ratio( street_name.lower(),
                                               standard_name.lower() )
-            if (potential_ratio > ratio):
-                matched_name = standard_name
-                matched_suffix = ""
-                ratio = potential_ratio
+                if (potential_ratio > ratio):
+                    matched_name = standard_name
+                    if len(name_to_suffix_dict[matched_name])==1: 
+                        matched_suffix = list(name_to_suffix_dict[matched_name])[0]
+                    ratio = potential_ratio
         return (self.strip(matched_name), self.strip(matched_suffix), ratio)
 
 

@@ -3,14 +3,20 @@
 ### Import libraries
 from fuzzywuzzy import fuzz
 import numpy as np
-import os
+import os, sys, inspect
 import pandas as pd
 import pickle
 import re
-import sys
 
-from .resource_manager import ResourceManager
-from .address_parser import AddressParser
+# Import submodules
+cmd_folder = os.path.realpath(os.path.abspath(os.path.split(\
+                inspect.getfile( inspect.currentframe() ))[0]))
+if cmd_folder not in sys.path:
+     sys.path.insert(0, cmd_folder)
+
+import resource_manager
+from address_parser_class import AddressParser
+
 
 def load_sample():
     return ResourceManager().load_sample()
@@ -41,6 +47,33 @@ def parse_street_series(series, target_df=None):
     else:
         return zip(*series.fillna("").apply(parse_street))
 
+
+def combine_address_row(row):
+    """ Combines street addresses on a row level
+    Args:
+        one row that contains variables "Street Prefix", "Street Number",
+            "Street Name", "Street Suffix"
+    Returns:
+        str with one combined address
+    """
+    if row['Street Prefix'] == "":
+        ans = row['Street Number'] + ' ' + row['Street Name'] + ' ' + row['Street Suffix']
+    else:
+        ans = row['Street Number'] + ' ' + row['Street Prefix'] + ' ' + \
+        row['Street Name'] + ' ' + row['Street Suffix']
+    return ans.strip()
+
+
+def combine_address_df(df):
+    """ Combines street addresses on a row level
+    Args:
+        one row that contains variables "Street Prefix", "Street Number",
+            "Street Name", "Street Suffix"
+    Returns:
+        df such that df['Addres_s'] is the combined addreess
+    """
+    df = df.apply(combine_address_row, axis=1)
+    return df
 
 
 def get_unique(df, col_name):
@@ -87,7 +120,7 @@ def get_combinations_as_dict(df, cols):
                   where d[v][value] = set containing all distinct values of v correponsing to value
     """
 
-    grouped = df[cols].groupby(cols[0])[cols[1:]].agg(lambda x: set(x))
+    grouped = df[cols].groupby(cols[0])[cols[1:]].agg(lambda x: set(x))[cols[1]]
     return grouped.to_dict()
 
 
@@ -164,3 +197,58 @@ def gen_fill_suffix_row(row, name_to_suffix_dict,
             return ans
 
     return callable
+
+
+def get_pin_len(df, pin_col_name='Parcel Number'):
+    if pin_col_name not in df.columns:
+        pin_col_name = 'PIN'
+    df['PIN_len'] = df[pin_col_name].apply(lambda x: len(str(x)))
+    return df
+
+######################################################################
+########## The following are used to merge transaction data with
+########## public record data
+######################################################################
+
+def gen_raw_index(df):
+    return df.reset_index().rename(columns={'index':'index_raw'})
+
+def gen_PIN_len(df):
+    df['PIN_len'] = df['PIN'].apply(lambda x: len(str(x)))
+    return df
+
+def clean_PIN_by_row(row):
+    try:
+      if row['PIN_len']==12 and str(row['PIN'])[:2]=='50':
+        return str(row['PIN'])[2:]
+    except:
+        pass
+    return str(row['PIN'])
+
+def split_mult_PIN(x):
+    if any([c.isnumeric() for c in x]):
+        temp = re.split("[^\d]", x)
+        ans = []
+        for i,p in enumerate(temp):
+            if len(p)>0:
+                ans.append(temp[0][:-len(p)] + p)
+        return ans
+    else:
+        return [x]
+
+def gen_mult_PIN_list(df):
+    df['PIN'] = df.apply(clean_PIN_by_row, axis=1)
+    df['temp'] = df['PIN'].astype('str').apply(split_mult_PIN)
+    return df
+
+def split_PIN_list(df):
+    return pd.DataFrame({col: np.repeat( df[col].values, df['temp'].str.len() ) \
+            for col in df.columns.drop('temp') })\
+            .assign(**{'temp':np.concatenate(df['temp'].values)})[df.columns]
+
+def gen_index(df):
+    return df.reset_index().rename(columns={'index':'index_clean'})
+
+def clean_temp_col(df):
+    df['PIN'] = df['temp']
+    return df.drop(columns=['PIN_len','temp']).drop_duplicates(subset=['Address_x', 'PIN'])
